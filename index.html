@@ -34,14 +34,15 @@ const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
 const ONGLETS = [
   { nom: "Aller", titre: "Boulevard George V",
     arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"],
-    exclure: ["911", "912"], sens9: "BRANDENBURG" },
+    exclure: ["912"], sens9: "BRANDENBURG" },
   { nom: "Retour", titre: "Mandron",
     arrets: ["bordeaux:StopPoint:BP:604:LOC", "bordeaux:StopPoint:BP:1959:LOC"],
-    exclure: ["911", "912"], sens9: "GARE ST JEAN" },
+    exclure: ["912"], sens9: "GARE ST JEAN" },
 ];
 
 // Les données SIRI mettent souvent les textes dans {value: "..."} ou dans une liste
 const val = x => Array.isArray(x) ? val(x[0]) : (x && typeof x === "object" && "value" in x) ? x.value : x;
+const NOMS = { "911": "H1" }; // numéro interne → nom affiché
 
 let choix = 0;
 try { choix = Number(localStorage.getItem("onglet")) || 0; } catch (e) {}
@@ -85,7 +86,8 @@ async function charger() {
                  || appel.AimedArrivalTime || appel.AimedDepartureTime;
       const ligne = val(mvj.PublishedLineName) || (val(mvj.LineRef) || "").split(":")[2] || "?";
       return {
-        ligne: String(ligne).replace(/^0+/, ""),
+        ligne: NOMS[String(ligne).replace(/^0+/, "")] || String(ligne).replace(/^0+/, ""),
+
         destination: val(mvj.DestinationName) || val(mvj.DirectionName) || "",
         minutes: heure ? Math.round((new Date(heure) - maintenant) / 60000) : null,
         tempsReel: !!(appel.ExpectedArrivalTime || appel.ExpectedDepartureTime),

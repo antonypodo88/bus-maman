@@ -105,9 +105,9 @@ async function charger() {
       return;
     }
 
-    zone.innerHTML = bus.map(b => `<div class="bus">
+        zone.innerHTML = bus.map(b => `<div class="bus" onclick="location.href='carte.html?ligne=${b.ligne}&onglet=${choix}'">
         <span class="num">${b.ligne}</span>
-        <span class="dest">→ ${b.destination}</span>
+        <span class="dest">→ ${b.destination}<small style="display:block;color:#ffd400;font-size:0.7em">Voir sur la carte ›</small></span>
         <span class="min">${b.minutes === 0 ? "Arrive" : b.minutes + " min"}
           <small>${b.tempsReel ? "en direct" : "horaire prévu"}</small></span>
       </div>`).join("");

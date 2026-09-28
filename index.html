@@ -32,10 +32,12 @@
 const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
 
 const ONGLETS = [
-  { nom: "Aller",  titre: "Boulevard George V",
-    arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"] },
+  { nom: "Aller", titre: "Boulevard George V",
+    arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"],
+    exclure: ["911", "912"], sens9: "BRANDENBURG" },
   { nom: "Retour", titre: "Mandron",
-    arrets: ["bordeaux:StopPoint:BP:604:LOC", "bordeaux:StopPoint:BP:1959:LOC"] },
+    arrets: ["bordeaux:StopPoint:BP:604:LOC", "bordeaux:StopPoint:BP:1959:LOC"],
+    exclure: ["911", "912"], sens9: "GARE ST JEAN" },
 ];
 
 // Les données SIRI mettent souvent les textes dans {value: "..."} ou dans une liste
@@ -89,6 +91,9 @@ async function charger() {
         tempsReel: !!(appel.ExpectedArrivalTime || appel.ExpectedDepartureTime),
       };
     }).filter(b => b.minutes !== null && b.minutes >= 0)
+      .filter(b => !o.exclure.includes(b.ligne))
+      .filter(b => b.ligne !== "9" || b.destination.toUpperCase().includes(o.sens9))
+
       .sort((a, b) => a.minutes - b.minutes)
       .slice(0, 8);
 

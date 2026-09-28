@@ -6,6 +6,7 @@
 <title>Carte bus</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/protobufjs/7.2.6/protobuf.min.js"></script>
 <style>
   html, body { margin: 0; height: 100%; font-family: system-ui; background: #111; color: #eee; }
   .haut { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 1000; display: flex; gap: 8px; }
@@ -15,8 +16,9 @@
   #carte { position: absolute; top: 0; bottom: 70px; left: 0; right: 0; }
   #info { position: absolute; bottom: 0; left: 0; right: 0; height: 70px; padding: 8px 12px;
           font-size: 0.85em; box-sizing: border-box; overflow: auto; }
-  .etiquette { background: #ffd400; color: #111; font-weight: bold; border-radius: 8px;
-               padding: 3px 7px; border: 2px solid #111; white-space: nowrap; font-size: 14px; }
+  .bus { background: #ffd400; color: #111; font-weight: bold; border-radius: 8px;
+         padding: 3px 7px; border: 2px solid #111; white-space: nowrap; font-size: 14px; }
+  .bus.sens1 { background: #ff8c1a; }
 </style>
 </head>
 <body>
@@ -26,124 +28,104 @@
 
 <script>
 const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
-const BASE = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/";
-const NOMS = { "911": "H1" };
+const SIRI = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/";
+const POSITIONS = "https://bdx.mecatran.com/utw/ws/gtfsfeed/vehicles/bordeaux?apiKey=" + CLE;
+const LIGNES = { "9": "9", "911": "H1" };   // numéro dans les données → nom affiché
 
 const ONGLETS = [
-  { nom: "Aller", arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"],
-    exclure: ["912"], sens9: "BRANDENBURG" },
-  { nom: "Retour", arrets: ["bordeaux:StopPoint:BP:604:LOC", "bordeaux:StopPoint:BP:1959:LOC"],
-    exclure: ["912"], sens9: "GARE ST JEAN" },
+  { nom: "Aller",  arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"] },
+  { nom: "Retour", arrets: ["bordeaux:StopPoint:BP:604:LOC",  "bordeaux:StopPoint:BP:1959:LOC"] },
 ];
 
 const val = x => Array.isArray(x) ? val(x[0]) : (x && typeof x === "object" && "value" in x) ? x.value : x;
-const nb = x => parseFloat(val(x));                         // lit un nombre, même dans {value: …}
+const nb = x => parseFloat(val(x));
 const valide = p => Number.isFinite(p[0]) && Number.isFinite(p[1]);
 
+// --- Description du format binaire GTFS-RT (seulement les champs utiles) ---
+const racine = protobuf.Root.fromJSON({ nested: {
+  FeedMessage:      { fields: { entity:   { rule: "repeated", type: "FeedEntity", id: 2 } } },
+  FeedEntity:       { fields: { id: { type: "string", id: 1 }, vehicle: { type: "VehiclePosition", id: 4 } } },
+  VehiclePosition:  { fields: { trip: { type: "TripDescriptor", id: 1 }, position: { type: "Position", id: 2 },
+                                vehicle: { type: "VehicleDescriptor", id: 8 } } },
+  TripDescriptor:   { fields: { tripId: { type: "string", id: 1 }, routeId: { type: "string", id: 5 },
+                                directionId: { type: "uint32", id: 6 } } },
+  Position:         { fields: { latitude: { type: "float", id: 1 }, longitude: { type: "float", id: 2 } } },
+  VehicleDescriptor:{ fields: { id: { type: "string", id: 1 }, label: { type: "string", id: 2 } } },
+}});
+const FeedMessage = racine.lookupType("FeedMessage");
+
+// --- Carte ---
 const carte = L.map("carte", { zoomControl: false }).setView([44.84, -0.58], 13);
-L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19, attribution: "© OpenStreetMap"
-}).addTo(carte);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(carte);
 const calqueBus = L.layerGroup().addTo(carte);
 const calqueArrets = L.layerGroup().addTo(carte);
 
-let choix = 0, coords = {}, premierCadrage = true, exempleLieu = "";
+let choix = 0, coords = {}, cadrer = true;
 
 function afficherOnglets() {
   document.getElementById("onglets").innerHTML = ONGLETS.map((o, i) =>
     `<button class="${i === choix ? "actif" : ""}" onclick="choisir(${i})">${o.nom}</button>`).join("");
 }
-function choisir(i) { choix = i; premierCadrage = true; afficherOnglets(); rafraichir(); }
+function choisir(i) { choix = i; cadrer = true; afficherOnglets(); dessinerArrets(); }
 
 async function chargerCoords() {
-  try { coords = JSON.parse(localStorage.getItem("coordsArrets2") || "{}"); } catch (e) {}
+  try { coords = JSON.parse(localStorage.getItem("coordsArrets3") || "{}"); } catch (e) {}
   const tous = ONGLETS.flatMap(o => o.arrets);
-  if (tous.every(id => coords[id] && valide(coords[id]))) return;
-  const data = await (await fetch(BASE + "stoppoints-discovery.json?AccountKey=" + CLE)).json();
+  if (tous.every(id => coords[id])) return;
+  const data = await (await fetch(SIRI + "stoppoints-discovery.json?AccountKey=" + CLE)).json();
   for (const a of data?.Siri?.StopPointsDelivery?.AnnotatedStopPointRef || []) {
     const id = val(a.StopPointRef);
     if (!tous.includes(id)) continue;
-    exempleLieu = exempleLieu || JSON.stringify(a.Location);
-    const p = [nb(a.Location?.Latitude), nb(a.Location?.Longitude)];
+    const l = a.Location || {};
+    const p = [nb(l.latitude ?? l.Latitude), nb(l.longitude ?? l.Longitude)];
     if (valide(p)) coords[id] = p;
   }
-  try { localStorage.setItem("coordsArrets2", JSON.stringify(coords)); } catch (e) {}
+  try { localStorage.setItem("coordsArrets3", JSON.stringify(coords)); } catch (e) {}
 }
 
-async function lireArret(ref) {
-  const url = BASE + "stop-monitoring.json?AccountKey=" + CLE + "&MonitoringRef=" + encodeURIComponent(ref);
-  const data = await (await fetch(url)).json();
-  const liv = data?.Siri?.ServiceDelivery?.StopMonitoringDelivery;
-  return (Array.isArray(liv) ? liv[0] : liv)?.MonitoredStopVisit || [];
+function dessinerArrets() {
+  calqueArrets.clearLayers();
+  const pts = ONGLETS[choix].arrets.filter(id => coords[id]).map(id => coords[id]);
+  pts.forEach(p => L.circleMarker(p, { radius: 9, color: "#fff", weight: 3, fillColor: "#1e6fff", fillOpacity: 1 })
+    .bindPopup("Arrêt de maman").addTo(calqueArrets));
+  if (cadrer && pts.length) { carte.setView(pts[0], 15); cadrer = false; }
 }
 
-async function rafraichir() {
-  const o = ONGLETS[choix];
+async function rafraichirBus() {
   const info = document.getElementById("info");
   try {
-    calqueArrets.clearLayers();
-    const points = [];
-    o.arrets.forEach(id => {
-      if (coords[id] && valide(coords[id])) {
-        L.circleMarker(coords[id], { radius: 9, color: "#fff", weight: 3, fillColor: "#1e6fff", fillOpacity: 1 })
-          .addTo(calqueArrets);
-        points.push(coords[id]);
-      }
-    });
-
-    const visites = (await Promise.all(o.arrets.map(lireArret))).flat();
-    const maintenant = Date.now();
+    const rep = await fetch(POSITIONS);
+    const flux = FeedMessage.decode(new Uint8Array(await rep.arrayBuffer()));
     calqueBus.clearLayers();
-    let total = 0, localises = 0, exemple = null, mauvaisePos = "";
-    const dejaVus = new Set();
-
-    for (const v of visites) {
-      const mvj = v.MonitoredVehicleJourney || {};
-      const num = String(val(mvj.LineRef) || "").split(":")[2]?.replace(/^0+/, "") || "?";
-      const ligne = NOMS[num] || num;
-      const dest = val(mvj.DestinationName) || "";
-      if (o.exclure.includes(num)) continue;
-      if (num === "9" && !dest.toUpperCase().includes(o.sens9)) continue;
-      total++;
-      exemple = exemple || mvj;
-
-      const pos = mvj.VehicleLocation;
-      if (!pos) continue;
-      const p = [nb(pos.Latitude), nb(pos.Longitude)];
-      if (!valide(p)) { mauvaisePos = mauvaisePos || JSON.stringify(pos); continue; }
-      const cle = val(mvj.VehicleRef) || p.join(",");
-      if (dejaVus.has(cle)) continue;
-      dejaVus.add(cle);
-      localises++;
-
-      const appel = mvj.MonitoredCall || {};
-      const heure = appel.ExpectedArrivalTime || appel.AimedArrivalTime;
-      const min = heure ? Math.max(0, Math.round((new Date(heure) - maintenant) / 60000)) : "?";
-      L.marker(p, { icon: L.divIcon({ className: "", html: `<span class="etiquette">${ligne} · ${min} min</span>` }) })
-        .bindPopup(`${ligne} → ${dest}<br>à votre arrêt dans ${min} min`)
+    const lignesVues = new Set();
+    let n = 0;
+    for (const e of flux.entity || []) {
+      const v = e.vehicle;
+      if (!v?.position) continue;
+      const route = v.trip?.routeId || "";
+      const num = ((route.match(/\d+/) || [""])[0]).replace(/^0+/, "");
+      lignesVues.add(route);
+      if (!(num in LIGNES)) continue;
+      const p = [v.position.latitude, v.position.longitude];
+      if (!valide(p)) continue;
+      n++;
+      const sens = v.trip?.directionId || 0;
+      L.marker(p, { icon: L.divIcon({ className: "", html: `<span class="bus sens${sens}">${LIGNES[num]}</span>` }) })
+        .bindPopup(`Ligne ${LIGNES[num]} · sens ${sens}`)
         .addTo(calqueBus);
-      points.push(p);
     }
-
-    if (premierCadrage && points.length) {
-      carte.fitBounds(points, { padding: [60, 60], maxZoom: 16 });
-      premierCadrage = false;
-    }
-
-    let msg = `${localises} bus sur la carte · ${new Date().toLocaleTimeString("fr-FR")}`;
-    if (points.length === 0 && exempleLieu) msg += `<br><small>Format des arrêts : ${exempleLieu}</small>`;
-    if (mauvaisePos) msg += `<br><small>Format des positions : ${mauvaisePos}</small>`;
-    if (total > 0 && localises === 0 && !mauvaisePos && exemple)
-      msg += `<br><small>Pas de position GPS. Champs reçus : ${Object.keys(exemple).join(", ")}</small>`;
+    let msg = `${n} bus 9 / H1 sur la carte · ${new Date().toLocaleTimeString("fr-FR")}`;
+    if (n === 0) msg += `<br><small>${(flux.entity || []).length} véhicules reçus. Exemples de lignes : ${[...lignesVues].slice(0, 12).join(", ") || "aucune"}</small>`;
     info.innerHTML = msg;
   } catch (e) {
-    info.innerHTML = "Erreur : " + e.message;
+    info.innerHTML = "Erreur positions : " + e.message;
   }
 }
 
 afficherOnglets();
-chargerCoords().then(rafraichir);
-setInterval(rafraichir, 20000);
+chargerCoords().then(dessinerArrets);
+rafraichirBus();
+setInterval(rafraichirBus, 15000);
 </script>
 </body>
 </html>

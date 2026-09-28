@@ -3,51 +3,118 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Explorateur TBM</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mon bus">
+<title>Mon bus</title>
 <style>
-  body { font-family: system-ui; background: #111; color: #eee; padding: 16px; }
-  .arret { border-bottom: 1px solid #333; padding: 8px 0; }
-  small { color: #aaa; }
+  body { font-family: system-ui; background: #111; color: #eee; padding: 16px; margin: 0; }
+  .onglets { display: flex; gap: 10px; margin-bottom: 16px; }
+  .onglets button { flex: 1; background: #222; color: #eee; border: 2px solid #444; border-radius: 14px;
+                    padding: 14px 8px; font-size: 1.2em; }
+  .onglets button.actif { background: #ffd400; color: #111; border-color: #ffd400; font-weight: bold; }
+  h2 { font-size: 1.6em; margin: 8px 0 16px; }
+  .bus { display: flex; align-items: center; gap: 14px; background: #1c1c1c; border-radius: 14px;
+         padding: 14px; margin-bottom: 10px; }
+  .num { background: #ffd400; color: #111; font-weight: bold; font-size: 1.5em; border-radius: 10px;
+         min-width: 2.4em; text-align: center; padding: 6px; }
+  .dest { flex: 1; font-size: 1.2em; }
+  .min { font-size: 1.8em; font-weight: bold; text-align: right; }
+  .min small { display: block; font-size: 0.45em; font-weight: normal; color: #aaa; }
   pre { white-space: pre-wrap; font-size: 11px; color: #aaa; }
 </style>
 </head>
 <body>
-<h2>Recherche d'arrêts TBM</h2>
-<div id="resultat">Chargement… (la liste est grosse, patientez quelques secondes)</div>
+<div class="onglets" id="onglets"></div>
+<h2 id="titre">Chargement…</h2>
+<div id="departs"></div>
 
 <script>
 const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
-const MOTS = ["george", "mandron"]; // ce qu'on cherche dans les noms d'arrêts
 
-const simple = s => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const val = x => (x && typeof x === "object" && "value" in x) ? x.value : x;
+const ONGLETS = [
+  { nom: "Aller",  titre: "Boulevard George V",
+    arrets: ["bordeaux:StopPoint:BP:2344:LOC", "bordeaux:StopPoint:BP:3310:LOC"] },
+  { nom: "Retour", titre: "Mandron",
+    arrets: ["bordeaux:StopPoint:BP:604:LOC", "bordeaux:StopPoint:BP:1959:LOC"] },
+];
 
-async function chercher() {
-  const zone = document.getElementById("resultat");
+// Les données SIRI mettent souvent les textes dans {value: "..."} ou dans une liste
+const val = x => Array.isArray(x) ? val(x[0]) : (x && typeof x === "object" && "value" in x) ? x.value : x;
+
+let choix = 0;
+try { choix = Number(localStorage.getItem("onglet")) || 0; } catch (e) {}
+if (choix >= ONGLETS.length) choix = 0;
+
+function afficherOnglets() {
+  document.getElementById("onglets").innerHTML = ONGLETS.map((o, i) =>
+    `<button class="${i === choix ? "actif" : ""}" onclick="choisir(${i})">${o.nom}</button>`
+  ).join("");
+}
+
+function choisir(i) {
+  choix = i;
+  try { localStorage.setItem("onglet", i); } catch (e) {}
+  afficherOnglets();
+  document.getElementById("departs").innerHTML = "";
+  charger();
+}
+
+async function lireArret(ref) {
+  const url = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/stop-monitoring.json?AccountKey="
+            + CLE + "&MonitoringRef=" + encodeURIComponent(ref);
+  const data = await (await fetch(url)).json();
+  const livraison = data?.Siri?.ServiceDelivery?.StopMonitoringDelivery;
+  const visites = (Array.isArray(livraison) ? livraison[0] : livraison)?.MonitoredStopVisit || [];
+  return { data, visites };
+}
+
+async function charger() {
+  const o = ONGLETS[choix];
+  document.getElementById("titre").textContent = "Depuis " + o.titre;
+  const zone = document.getElementById("departs");
   try {
-    const url = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/stoppoints-discovery.json?AccountKey=" + CLE;
-    const data = await (await fetch(url)).json();
-    const arrets = data?.Siri?.StopPointsDelivery?.AnnotatedStopPointRef || [];
+    const resultats = await Promise.all(o.arrets.map(lireArret));
+    const maintenant = Date.now();
 
-    if (arrets.length === 0) {
-      zone.innerHTML = "<p>Format inattendu. Début de la réponse :</p><pre>"
-        + JSON.stringify(data).slice(0, 1500).replace(/</g, "&lt;") + "</pre>";
+    const bus = resultats.flatMap(r => r.visites).map(v => {
+      const mvj = v.MonitoredVehicleJourney || {};
+      const appel = mvj.MonitoredCall || {};
+      const heure = appel.ExpectedArrivalTime || appel.ExpectedDepartureTime
+                 || appel.AimedArrivalTime || appel.AimedDepartureTime;
+      const ligne = val(mvj.PublishedLineName) || (val(mvj.LineRef) || "").split(":")[2] || "?";
+      return {
+        ligne: String(ligne).replace(/^0+/, ""),
+        destination: val(mvj.DestinationName) || val(mvj.DirectionName) || "",
+        minutes: heure ? Math.round((new Date(heure) - maintenant) / 60000) : null,
+        tempsReel: !!(appel.ExpectedArrivalTime || appel.ExpectedDepartureTime),
+      };
+    }).filter(b => b.minutes !== null && b.minutes >= 0)
+      .sort((a, b) => a.minutes - b.minutes)
+      .slice(0, 8);
+
+    if (bus.length === 0) {
+      zone.innerHTML = "<p>Aucun bus trouvé. Début de la réponse :</p><pre>"
+        + JSON.stringify(resultats[0]?.data).slice(0, 1500).replace(/</g, "&lt;") + "</pre>";
       return;
     }
 
-    const trouves = arrets.filter(a => MOTS.some(m => simple(val(a.StopName)).includes(m)));
-    zone.innerHTML = `<p>${arrets.length} arrêts au total, ${trouves.length} correspondent :</p>`
-      + trouves.map(a => `<div class="arret">
-          <b>${val(a.StopName)}</b><br>
-          <small>Identifiant : ${val(a.StopPointRef)}<br>
-          Lignes : ${(a.Lines || []).map(val).join(", ") || "?"}</small>
-        </div>`).join("");
+    zone.innerHTML = bus.map(b => `<div class="bus">
+        <span class="num">${b.ligne}</span>
+        <span class="dest">→ ${b.destination}</span>
+        <span class="min">${b.minutes === 0 ? "Arrive" : b.minutes + " min"}
+          <small>${b.tempsReel ? "en direct" : "horaire prévu"}</small></span>
+      </div>`).join("");
   } catch (e) {
     zone.innerHTML = "<p>Erreur : " + e.message + "</p>";
   }
 }
 
-chercher();
+afficherOnglets();
+charger();
+setInterval(charger, 30000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") charger();
+});
 </script>
 </body>
 </html>

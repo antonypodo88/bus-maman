@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explorateur TBM</title>
+<style>
+  body { font-family: system-ui; background: #111; color: #eee; padding: 16px; }
+  .arret { border-bottom: 1px solid #333; padding: 8px 0; }
+  small { color: #aaa; }
+  pre { white-space: pre-wrap; font-size: 11px; color: #aaa; }
+</style>
+</head>
+<body>
+<h2>Recherche d'arrêts TBM</h2>
+<div id="resultat">Chargement… (la liste est grosse, patientez quelques secondes)</div>
+
+<script>
+const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
+const MOTS = ["george", "mandron"]; // ce qu'on cherche dans les noms d'arrêts
+
+const simple = s => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const val = x => (x && typeof x === "object" && "value" in x) ? x.value : x;
+
+async function chercher() {
+  const zone = document.getElementById("resultat");
+  try {
+    const url = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/stoppoints-discovery.json?AccountKey=" + CLE;
+    const data = await (await fetch(url)).json();
+    const arrets = data?.Siri?.StopPointsDelivery?.AnnotatedStopPointRef || [];
+
+    if (arrets.length === 0) {
+      zone.innerHTML = "<p>Format inattendu. Début de la réponse :</p><pre>"
+        + JSON.stringify(data).slice(0, 1500).replace(/</g, "&lt;") + "</pre>";
+      return;
+    }
+
+    const trouves = arrets.filter(a => MOTS.some(m => simple(val(a.StopName)).includes(m)));
+    zone.innerHTML = `<p>${arrets.length} arrêts au total, ${trouves.length} correspondent :</p>`
+      + trouves.map(a => `<div class="arret">
+          <b>${val(a.StopName)}</b><br>
+          <small>Identifiant : ${val(a.StopPointRef)}<br>
+          Lignes : ${(a.Lines || []).map(val).join(", ") || "?"}</small>
+        </div>`).join("");
+  } catch (e) {
+    zone.innerHTML = "<p>Erreur : " + e.message + "</p>";
+  }
+}
+
+chercher();
+</script>
+</body>
+</html>

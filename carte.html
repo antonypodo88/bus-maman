@@ -13,6 +13,7 @@
   .haut button { flex: 1; background: #222; color: #eee; border: 2px solid #444; border-radius: 14px;
                  padding: 12px; font-size: 1.1em; }
   .haut button.actif { background: #ffd400; color: #111; border-color: #ffd400; font-weight: bold; }
+  .haut button.retour { flex: 0 0 auto; font-size: 1.4em; padding: 8px 16px; }
   #carte { position: absolute; top: 0; bottom: 70px; left: 0; right: 0; }
   #info { position: absolute; bottom: 0; left: 0; right: 0; height: 70px; padding: 8px 12px;
           font-size: 0.85em; box-sizing: border-box; overflow: auto; }
@@ -37,11 +38,16 @@ const ONGLETS = [
   { nom: "Retour", arrets: ["bordeaux:StopPoint:BP:604:LOC",  "bordeaux:StopPoint:BP:1959:LOC"] },
 ];
 
+// Ce que la page de la liste nous transmet (ex. carte.html?ligne=9&onglet=0)
+const params = new URLSearchParams(location.search);
+const LIGNE_CHOISIE = params.get("ligne");
+let choix = Number(params.get("onglet")) || 0, coords = {}, cadrer = true;
+
 const val = x => Array.isArray(x) ? val(x[0]) : (x && typeof x === "object" && "value" in x) ? x.value : x;
 const nb = x => parseFloat(val(x));
 const valide = p => Number.isFinite(p[0]) && Number.isFinite(p[1]);
 
-// --- Description du format binaire GTFS-RT (seulement les champs utiles) ---
+// --- Format binaire GTFS-RT (seulement les champs utiles) ---
 const racine = protobuf.Root.fromJSON({ nested: {
   FeedMessage:      { fields: { entity:   { rule: "repeated", type: "FeedEntity", id: 2 } } },
   FeedEntity:       { fields: { id: { type: "string", id: 1 }, vehicle: { type: "VehiclePosition", id: 4 } } },
@@ -60,13 +66,9 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, att
 const calqueBus = L.layerGroup().addTo(carte);
 const calqueArrets = L.layerGroup().addTo(carte);
 
-const params = new URLSearchParams(location.search);
-const LIGNE_CHOISIE = params.get("ligne");   // "9" ou "H1", reçu depuis la liste
-let choix = Number(params.get("onglet")) || 0, coords = {}, cadrer = true;
-
 function afficherOnglets() {
   document.getElementById("onglets").innerHTML =
-    `<button style="flex:0 0 auto" onclick="location.href='index.html'">←</button>`
+    `<button class="retour" onclick="location.href='index.html'">←</button>`
     + ONGLETS.map((o, i) =>
       `<button class="${i === choix ? "actif" : ""}" onclick="choisir(${i})">${o.nom}</button>`).join("");
 }
@@ -119,7 +121,8 @@ async function rafraichirBus() {
         .bindPopup(`Ligne ${LIGNES[num]} · sens ${sens}`)
         .addTo(calqueBus);
     }
-    let msg = `${n} bus 9 / H1 sur la carte · ${new Date().toLocaleTimeString("fr-FR")}`;
+    const quoi = LIGNE_CHOISIE ? "bus " + LIGNE_CHOISIE : "bus 9 / H1";
+    let msg = `${n} ${quoi} sur la carte · ${new Date().toLocaleTimeString("fr-FR")}`;
     if (n === 0) msg += `<br><small>${(flux.entity || []).length} véhicules reçus. Exemples de lignes : ${[...lignesVues].slice(0, 12).join(", ") || "aucune"}</small>`;
     info.innerHTML = msg;
   } catch (e) {

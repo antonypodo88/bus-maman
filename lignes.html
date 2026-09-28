@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lignes TBM</title>
+<style>
+  body { font-family: system-ui; background: #111; color: #eee; padding: 16px; }
+  .ligne { border-bottom: 1px solid #333; padding: 8px 0; }
+  small { color: #aaa; }
+  pre { white-space: pre-wrap; font-size: 11px; color: #aaa; }
+</style>
+</head>
+<body>
+<h2>Recherche de lignes TBM</h2>
+<div id="resultat">Chargement…</div>
+<script>
+const CLE = "opendata-bordeaux-metropole-flux-gtfs-rt";
+const CHERCHE = "h1"; // ce qu'on cherche dans le nom ou l'identifiant de la ligne
+
+const val = x => Array.isArray(x) ? val(x[0]) : (x && typeof x === "object" && "value" in x) ? x.value : x;
+
+async function chercher() {
+  const zone = document.getElementById("resultat");
+  try {
+    const url = "https://bdx.mecatran.com/utw/ws/siri/2.0/bordeaux/lines-discovery.json?AccountKey=" + CLE;
+    const data = await (await fetch(url)).json();
+    const lignes = data?.Siri?.LinesDelivery?.AnnotatedLineRef || [];
+    if (lignes.length === 0) {
+      zone.innerHTML = "<p>Format inattendu :</p><pre>"
+        + JSON.stringify(data).slice(0, 1500).replace(/</g, "&lt;") + "</pre>";
+      return;
+    }
+    const txt = l => (val(l.LineName) + " " + val(l.LineRef)).toLowerCase();
+    const trouvees = lignes.filter(l => txt(l).includes(CHERCHE));
+    zone.innerHTML = `<p>${lignes.length} lignes au total, ${trouvees.length} correspondent à « ${CHERCHE} » :</p>`
+      + (trouvees.length ? trouvees : lignes).map(l => `<div class="ligne">
+          <b>${val(l.LineName) || "?"}</b><br>
+          <small>Identifiant : ${val(l.LineRef)}<br>
+          Destinations : ${(l.Destinations || []).map(d => val(d.DirectionName) || val(d.DestinationName) || val(d.PlaceName)).join(", ") || "?"}</small>
+        </div>`).join("");
+  } catch (e) {
+    zone.innerHTML = "<p>Erreur : " + e.message + "</p>";
+  }
+}
+chercher();
+</script>
+</body>
+</html>

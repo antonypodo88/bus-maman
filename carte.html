@@ -60,11 +60,15 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, att
 const calqueBus = L.layerGroup().addTo(carte);
 const calqueArrets = L.layerGroup().addTo(carte);
 
-let choix = 0, coords = {}, cadrer = true;
+const params = new URLSearchParams(location.search);
+const LIGNE_CHOISIE = params.get("ligne");   // "9" ou "H1", reçu depuis la liste
+let choix = Number(params.get("onglet")) || 0, coords = {}, cadrer = true;
 
 function afficherOnglets() {
-  document.getElementById("onglets").innerHTML = ONGLETS.map((o, i) =>
-    `<button class="${i === choix ? "actif" : ""}" onclick="choisir(${i})">${o.nom}</button>`).join("");
+  document.getElementById("onglets").innerHTML =
+    `<button style="flex:0 0 auto" onclick="location.href='index.html'">←</button>`
+    + ONGLETS.map((o, i) =>
+      `<button class="${i === choix ? "actif" : ""}" onclick="choisir(${i})">${o.nom}</button>`).join("");
 }
 function choisir(i) { choix = i; cadrer = true; afficherOnglets(); dessinerArrets(); }
 
@@ -106,6 +110,7 @@ async function rafraichirBus() {
       const num = ((route.match(/\d+/) || [""])[0]).replace(/^0+/, "");
       lignesVues.add(route);
       if (!(num in LIGNES)) continue;
+      if (LIGNE_CHOISIE && LIGNES[num] !== LIGNE_CHOISIE) continue;
       const p = [v.position.latitude, v.position.longitude];
       if (!valide(p)) continue;
       n++;
